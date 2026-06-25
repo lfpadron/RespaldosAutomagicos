@@ -56,7 +56,7 @@ Seleccionar todos | Limpiar seleccion
 Crear | Editar | Eliminar | Activar/Desactivar | Duplicar grupo
 Escanear proyectos | Respaldar ahora
 
-Seleccionado | Nombre | Activo | Raiz | Destino | Numero de proyectos
+Seleccionado | Nombre | Activo | Zona horaria | Raiz | Destino | Numero de proyectos
 Pendientes | Ultimo respaldo | Proximo escaneo | Estado | Progreso
 ```
 
@@ -181,7 +181,7 @@ Textual UI
 1. Abre la TUI.
 2. Entra a `Grupos de respaldo`.
 3. Usa `Crear`.
-4. Captura nombre, directorio raiz, destino, intervalos, retencion basica y compresion.
+4. Captura nombre, directorio raiz, destino, zona horaria, intervalos, retencion basica y compresion.
 5. Guarda.
 6. Usa `Escanear proyectos` para registrar subdirectorios inmediatos.
 
@@ -189,6 +189,7 @@ Validaciones principales:
 
 - nombre obligatorio y unico;
 - raiz y destino existentes;
+- zona horaria existente en Python, por ejemplo `America/Mexico_City`;
 - intervalo entre 5 y 1440 minutos;
 - estabilizacion menor que intervalo;
 - respaldos y dias de conservacion mayores o iguales a 1.
