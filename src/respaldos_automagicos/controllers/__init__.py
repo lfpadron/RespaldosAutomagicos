@@ -26,6 +26,11 @@ from respaldos_automagicos.controllers.restore import (
     RestoreSummary,
     RestoreVersionItem,
 )
+from respaldos_automagicos.controllers.task_scheduler import (
+    TaskSchedulerActionResult,
+    TaskSchedulerController,
+    TaskSchedulerControllerError,
+)
 
 __all__ = [
     "AuditController",
@@ -51,4 +56,7 @@ __all__ = [
     "RestoreProjectItem",
     "RestoreSummary",
     "RestoreVersionItem",
+    "TaskSchedulerActionResult",
+    "TaskSchedulerController",
+    "TaskSchedulerControllerError",
 ]

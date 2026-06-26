@@ -2,7 +2,7 @@
 
 RespaldosAutomagicos es la base de una aplicacion profesional para Windows que administrara respaldos ZIP automaticos por grupos configurables desde una TUI.
 
-La iteracion actual incluye arquitectura, configuracion, base de datos, migraciones, TUI, CRUD de grupos, repositorios, controllers, bus interno de eventos, vigilancia con watchdog, planificacion de respaldos pendientes, hashing real de contenido, creacion de ZIP, auditoria, retencion por cantidad/antiguedad y restauracion segura. Todavia no implementa Task Scheduler.
+La iteracion actual incluye arquitectura, configuracion, base de datos, migraciones, TUI, CRUD de grupos, repositorios, controllers, bus interno de eventos, vigilancia con watchdog, planificacion de respaldos pendientes, hashing real de contenido, creacion de ZIP, auditoria, retencion por cantidad/antiguedad, restauracion segura e integracion con Windows Task Scheduler.
 
 ## Requisitos
 
@@ -32,6 +32,25 @@ En Windows tambien puedes usar:
 ```powershell
 .\abrir_tui.bat
 ```
+
+## Servicio en segundo plano
+
+Task Scheduler ejecuta el nucleo de vigilancia y planificacion sin abrir la TUI:
+
+```powershell
+uv run python -m respaldos_automagicos run-service
+```
+
+La TUI permite crear y administrar la tarea programada desde `Configuracion`.
+Las acciones disponibles son:
+
+- activar al encender;
+- activar ahora;
+- desactivar por 30 minutos, 1 hora, 3 horas o N horas;
+- desactivar hasta el siguiente boot;
+- desactivar.
+
+Cada accion registra auditoria con resultado `TASK_SCHEDULER_OK` o `TASK_SCHEDULER_ERROR`.
 
 ## Pantallas TUI
 
@@ -91,6 +110,16 @@ Auditoria:
 Filtro por grupo | Accion | Resultado | Actualizar
 
 Fecha | Grupo | Directorio | Accion | Resultado | Detalles
+```
+
+Configuracion:
+
+```text
+Actualizar
+Task Scheduler:
+Activar al encender | Activar ahora
+Desactivar 30 min | Desactivar 1 hora | Desactivar 3 horas
+Horas | Desactivar N horas | Hasta siguiente boot | Desactivar
 ```
 
 ## Base de datos y migraciones
@@ -159,6 +188,7 @@ El nucleo de la aplicacion vive fuera de `tui/`. La TUI importa el nucleo, pero 
 - `hashing/`: punto de extension para hashes de contenido futuros.
 - `zipper/`: punto de extension para generacion ZIP futura.
 - `audit/`: servicio y repositorio para auditoria de eventos.
+- `task_scheduler/`: integracion con Windows Task Scheduler.
 - `tui/`: interfaz Textual principal.
 - `utils/`: utilidades compartidas sin dependencia de UI.
 
@@ -460,6 +490,4 @@ Ejemplo de `manifest.json`:
 ## Siguientes pasos
 
 1. Agregar configuracion global editable.
-2. Preparar integracion con Task Scheduler.
-3. Pulir metricas, empaquetado e instalador.
-# RespaldosAutomagicos
+2. Pulir metricas, empaquetado e instalador.

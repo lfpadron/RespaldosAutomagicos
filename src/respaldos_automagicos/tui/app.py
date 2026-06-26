@@ -1,5 +1,6 @@
 """Textual user interface for RespaldosAutomagicos."""
 
+from collections.abc import Callable
 from datetime import datetime
 
 from textual import events
@@ -8,6 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Checkbox, DataTable, Footer, Header, Input, Static
 
 from respaldos_automagicos.app import RespaldosAutomagicosApplication, create_app
+from respaldos_automagicos.audit.service import AuditService
 from respaldos_automagicos.config import AppSettings
 from respaldos_automagicos.controllers import (
     AuditController,
@@ -20,7 +22,11 @@ from respaldos_automagicos.controllers import (
     ManualBackupJobController,
     RestoreController,
     RestoreControllerError,
+    TaskSchedulerActionResult,
+    TaskSchedulerController,
+    TaskSchedulerControllerError,
 )
+from respaldos_automagicos.task_scheduler.service import TaskSchedulerService
 from respaldos_automagicos.utils.time import (
     DEFAULT_TIMEZONE,
     format_local_datetime,
@@ -109,6 +115,10 @@ class RespaldosAutomagicosTUI(App[None]):
         self.config_controller = ConfigController(
             settings=self.settings,
             session_factory=self.core_app.session_factory,
+        )
+        self.task_scheduler_controller = TaskSchedulerController(
+            task_scheduler_service=TaskSchedulerService(),
+            audit_service=AuditService(self.core_app.session_factory),
         )
         self.group_selection = GroupSelectionState()
         self._group_ids: list[int] = []
@@ -199,6 +209,22 @@ class RespaldosAutomagicosTUI(App[None]):
             self.refresh_audit()
         elif button_id == "config-refresh":
             self.refresh_config()
+        elif button_id == "task-enable-boot":
+            self._activate_task_on_boot()
+        elif button_id == "task-run-now":
+            self._activate_task_now()
+        elif button_id == "task-pause-30":
+            self._disable_task_for_minutes(30)
+        elif button_id == "task-pause-60":
+            self._disable_task_for_minutes(60)
+        elif button_id == "task-pause-180":
+            self._disable_task_for_minutes(180)
+        elif button_id == "task-pause-hours":
+            self._disable_task_for_custom_hours()
+        elif button_id == "task-pause-boot":
+            self._disable_task_until_boot()
+        elif button_id == "task-disable":
+            self._disable_task()
 
     def on_key(self, event: events.Key) -> None:
         """Handle group selection keyboard shortcuts."""
@@ -473,6 +499,18 @@ class RespaldosAutomagicosTUI(App[None]):
             config_table: DataTable[str] = DataTable(id="config-table")
             config_table.add_columns("Campo", "Valor")
             yield config_table
+            yield Static("Task Scheduler")
+            with Horizontal(classes="toolbar"):
+                yield Button("Activar al encender", id="task-enable-boot")
+                yield Button("Activar ahora", id="task-run-now")
+                yield Button("Desactivar 30 min", id="task-pause-30")
+                yield Button("Desactivar 1 hora", id="task-pause-60")
+                yield Button("Desactivar 3 horas", id="task-pause-180")
+            with Horizontal(classes="toolbar"):
+                yield Input(placeholder="Horas", id="task-pause-hours-input")
+                yield Button("Desactivar N horas", id="task-pause-hours")
+                yield Button("Hasta siguiente boot", id="task-pause-boot")
+                yield Button("Desactivar", id="task-disable", variant="warning")
 
     def _about_panel(self) -> ComposeResult:
         with Vertical(classes="panel hidden", id="about-panel"):
@@ -738,6 +776,54 @@ class RespaldosAutomagicosTUI(App[None]):
         self.query_one("#restore-confirm", Checkbox).value = False
         self._load_restore_versions()
         self.refresh_history()
+        self.refresh_audit()
+
+    def _activate_task_on_boot(self) -> None:
+        self._run_task_scheduler_action(
+            self.task_scheduler_controller.activate_on_boot
+        )
+
+    def _activate_task_now(self) -> None:
+        self._run_task_scheduler_action(self.task_scheduler_controller.activate_now)
+
+    def _disable_task_for_minutes(self, minutes: int) -> None:
+        self._run_task_scheduler_action(
+            lambda: self.task_scheduler_controller.disable_for_minutes(minutes)
+        )
+
+    def _disable_task_for_custom_hours(self) -> None:
+        value = self.query_one("#task-pause-hours-input", Input).value.strip()
+        if not value:
+            self._set_status("Captura cuántas horas desactivar.")
+            return
+        try:
+            hours = int(value)
+        except ValueError:
+            self._set_status("Las horas deben ser un número entero.")
+            return
+        self._run_task_scheduler_action(
+            lambda: self.task_scheduler_controller.disable_for_hours(hours)
+        )
+
+    def _disable_task_until_boot(self) -> None:
+        self._run_task_scheduler_action(
+            self.task_scheduler_controller.disable_until_next_boot
+        )
+
+    def _disable_task(self) -> None:
+        self._run_task_scheduler_action(self.task_scheduler_controller.disable)
+
+    def _run_task_scheduler_action(
+        self,
+        action: Callable[[], TaskSchedulerActionResult],
+    ) -> None:
+        try:
+            result = action()
+        except TaskSchedulerControllerError as exc:
+            self._set_status(f"Task Scheduler: {exc}")
+            self.refresh_audit()
+            return
+        self._set_status(result.message)
         self.refresh_audit()
 
     def _clear_restore_projects(self) -> None:
