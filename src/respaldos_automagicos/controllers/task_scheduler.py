@@ -34,12 +34,12 @@ class TaskSchedulerController:
         self._audit_service = audit_service
 
     def activate_on_boot(self) -> TaskSchedulerActionResult:
-        """Enable the background service at Windows boot."""
+        """Enable the background service when the user logs in to Windows."""
         return self._execute(
             action=AuditEvent.TASK_SCHEDULER_ENABLE_BOOT,
-            details="Activar al encender.",
+            details="Activar al iniciar sesion.",
             operation=self._task_scheduler_service.activate_on_boot,
-            success_message="Task Scheduler activado al encender.",
+            success_message="Task Scheduler activado al iniciar sesion.",
         )
 
     def activate_now(self) -> TaskSchedulerActionResult:
@@ -71,12 +71,14 @@ class TaskSchedulerController:
         return self.disable_for_minutes(hours * 60)
 
     def disable_until_next_boot(self) -> TaskSchedulerActionResult:
-        """Disable the background task until the next system boot."""
+        """Disable the background task until the next user logon."""
         return self._execute(
             action=AuditEvent.TASK_SCHEDULER_DISABLE_UNTIL_BOOT,
-            details="Desactivar hasta el siguiente boot.",
+            details="Desactivar hasta el siguiente inicio de sesion.",
             operation=self._task_scheduler_service.disable_until_next_boot,
-            success_message="Task Scheduler desactivado hasta el siguiente boot.",
+            success_message=(
+                "Task Scheduler desactivado hasta el siguiente inicio de sesion."
+            ),
         )
 
     def disable(self) -> TaskSchedulerActionResult:

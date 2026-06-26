@@ -501,7 +501,7 @@ class RespaldosAutomagicosTUI(App[None]):
             yield config_table
             yield Static("Task Scheduler")
             with Horizontal(classes="toolbar"):
-                yield Button("Activar al encender", id="task-enable-boot")
+                yield Button("Activar al iniciar sesión", id="task-enable-boot")
                 yield Button("Activar ahora", id="task-run-now")
                 yield Button("Desactivar 30 min", id="task-pause-30")
                 yield Button("Desactivar 1 hora", id="task-pause-60")
@@ -509,7 +509,7 @@ class RespaldosAutomagicosTUI(App[None]):
             with Horizontal(classes="toolbar"):
                 yield Input(placeholder="Horas", id="task-pause-hours-input")
                 yield Button("Desactivar N horas", id="task-pause-hours")
-                yield Button("Hasta siguiente boot", id="task-pause-boot")
+                yield Button("Hasta siguiente inicio de sesión", id="task-pause-boot")
                 yield Button("Desactivar", id="task-disable", variant="warning")
 
     def _about_panel(self) -> ComposeResult:

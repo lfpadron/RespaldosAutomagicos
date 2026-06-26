@@ -56,13 +56,13 @@ class TaskSchedulerService:
         self._clock = clock or datetime.now
 
     def activate_on_boot(self) -> None:
-        """Create or update the boot task and enable it."""
+        """Create or update the logon task and enable it."""
         self._create_main_task()
         self._enable_main_task()
         self._delete_resume_task()
 
     def activate_now(self) -> None:
-        """Ensure the boot task exists and start it immediately."""
+        """Ensure the logon task exists and start it immediately."""
         self.activate_on_boot()
         self._run_main_task()
 
@@ -83,7 +83,7 @@ class TaskSchedulerService:
         return resume_at
 
     def disable_until_next_boot(self) -> None:
-        """Disable the task and reactivate it at the next system boot."""
+        """Disable the task and reactivate it at the next user logon."""
         self._end_main_task()
         self._disable_main_task()
         self._create_resume_boot_task()
@@ -96,68 +96,110 @@ class TaskSchedulerService:
             self._run_main_task()
 
     def _create_main_task(self) -> None:
-        self._run_required(
-            [
-                "schtasks",
-                "/Create",
-                "/TN",
-                self.task_name,
-                "/SC",
-                "ONSTART",
-                "/TR",
-                self._module_action("run-service"),
-                "/F",
-            ]
+        self._run_powershell_required(
+            self._register_task_script(
+                task_name=self.task_name,
+                command_argument=self._module_command_argument("run-service"),
+                trigger="$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $User",
+            )
         )
 
     def _create_resume_once_task(self, resume_at: datetime) -> None:
-        self._run_required(
-            [
-                "schtasks",
-                "/Create",
-                "/TN",
-                self.resume_task_name,
-                "/SC",
-                "ONCE",
-                "/ST",
-                resume_at.strftime("%H:%M"),
-                "/SD",
-                resume_at.strftime("%m/%d/%Y"),
-                "/TR",
-                self._module_action("task-resume", "--run-now"),
-                "/F",
-            ]
+        resume_at_text = resume_at.strftime("%Y-%m-%d %H:%M:%S")
+        self._run_powershell_required(
+            self._register_task_script(
+                task_name=self.resume_task_name,
+                command_argument=self._module_command_argument(
+                    "task-resume",
+                    "--run-now",
+                ),
+                trigger=(
+                    "$Trigger = New-ScheduledTaskTrigger -Once -At "
+                    f"([datetime]::ParseExact({_ps_quote(resume_at_text)}, "
+                    "'yyyy-MM-dd HH:mm:ss', "
+                    "[Globalization.CultureInfo]::InvariantCulture))"
+                ),
+            )
         )
 
     def _create_resume_boot_task(self) -> None:
-        self._run_required(
-            [
-                "schtasks",
-                "/Create",
-                "/TN",
-                self.resume_task_name,
-                "/SC",
-                "ONSTART",
-                "/TR",
-                self._module_action("task-resume", "--run-now"),
-                "/F",
-            ]
+        self._run_powershell_required(
+            self._register_task_script(
+                task_name=self.resume_task_name,
+                command_argument=self._module_command_argument(
+                    "task-resume",
+                    "--run-now",
+                ),
+                trigger="$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $User",
+            )
         )
 
     def _enable_main_task(self) -> None:
-        self._run_required(["schtasks", "/Change", "/TN", self.task_name, "/Enable"])
+        self._run_powershell_required(
+            f"Enable-ScheduledTask -TaskName {_ps_quote(self.task_name)} | Out-Null"
+        )
 
     def _disable_main_task(self) -> None:
-        self._run_required(["schtasks", "/Change", "/TN", self.task_name, "/Disable"])
+        self._run_powershell_required(
+            f"Disable-ScheduledTask -TaskName {_ps_quote(self.task_name)} | Out-Null"
+        )
 
     def _run_main_task(self) -> None:
-        self._run_required(["schtasks", "/Run", "/TN", self.task_name])
+        self._run_powershell_required(
+            f"Start-ScheduledTask -TaskName {_ps_quote(self.task_name)} | Out-Null"
+        )
 
     def _end_main_task(self) -> None:
-        self._run_optional(["schtasks", "/End", "/TN", self.task_name])
+        self._run_powershell_optional(
+            f"Stop-ScheduledTask -TaskName {_ps_quote(self.task_name)} | Out-Null"
+        )
 
     def _delete_resume_task(self) -> None:
-        self._run_optional(["schtasks", "/Delete", "/TN", self.resume_task_name, "/F"])
+        self._run_powershell_optional(
+            "Unregister-ScheduledTask "
+            f"-TaskName {_ps_quote(self.resume_task_name)} "
+            "-Confirm:$false | Out-Null"
+        )
+
+    def _register_task_script(
+        self,
+        *,
+        task_name: str,
+        command_argument: str,
+        trigger: str,
+    ) -> str:
+        return "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                "$User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
+                (
+                    "$Action = New-ScheduledTaskAction "
+                    "-Execute 'cmd.exe' "
+                    f"-Argument {_ps_quote(command_argument)}"
+                ),
+                trigger,
+                (
+                    "$Principal = New-ScheduledTaskPrincipal "
+                    "-UserId $User "
+                    "-LogonType Interactive "
+                    "-RunLevel Limited"
+                ),
+                (
+                    "Register-ScheduledTask "
+                    f"-TaskName {_ps_quote(task_name)} "
+                    "-Action $Action "
+                    "-Trigger $Trigger "
+                    "-Principal $Principal "
+                    "-Force | Out-Null"
+                ),
+            ]
+        )
+
+    def _run_powershell_required(self, script: str) -> ScheduledTaskCommandResult:
+        return self._run_required(_powershell_args(script))
+
+    def _run_powershell_optional(self, script: str) -> ScheduledTaskCommandResult:
+        return self._run_optional(_powershell_args(script))
 
     def _run_required(self, args: Sequence[str]) -> ScheduledTaskCommandResult:
         result = self._runner(args)
@@ -168,14 +210,29 @@ class TaskSchedulerService:
     def _run_optional(self, args: Sequence[str]) -> ScheduledTaskCommandResult:
         return self._runner(args)
 
-    def _module_action(self, *module_args: str) -> str:
+    def _module_command_argument(self, *module_args: str) -> str:
         arguments = " ".join(module_args)
         return (
-            'cmd.exe /d /c "'
+            '/d /c "'
             f'cd /d ""{self._working_directory}"" && '
             f'""{self._python_executable}"" -m respaldos_automagicos {arguments}'
             '"'
         )
+
+
+def _powershell_args(script: str) -> list[str]:
+    return [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ]
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _subprocess_runner(args: Sequence[str]) -> ScheduledTaskCommandResult:

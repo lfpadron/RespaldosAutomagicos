@@ -44,10 +44,10 @@ uv run python -m respaldos_automagicos run-service
 La TUI permite crear y administrar la tarea programada desde `Configuracion`.
 Las acciones disponibles son:
 
-- activar al encender;
+- activar al iniciar sesion;
 - activar ahora;
 - desactivar por 30 minutos, 1 hora, 3 horas o N horas;
-- desactivar hasta el siguiente boot;
+- desactivar hasta el siguiente inicio de sesion;
 - desactivar.
 
 Cada accion registra auditoria con resultado `TASK_SCHEDULER_OK` o `TASK_SCHEDULER_ERROR`.
@@ -117,9 +117,9 @@ Configuracion:
 ```text
 Actualizar
 Task Scheduler:
-Activar al encender | Activar ahora
+Activar al iniciar sesion | Activar ahora
 Desactivar 30 min | Desactivar 1 hora | Desactivar 3 horas
-Horas | Desactivar N horas | Hasta siguiente boot | Desactivar
+Horas | Desactivar N horas | Hasta siguiente inicio de sesion | Desactivar
 ```
 
 ## Base de datos y migraciones
