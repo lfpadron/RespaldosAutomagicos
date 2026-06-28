@@ -1,0 +1,9 @@
+--- proceso: P0007
+--- fecha y hora de inicio: 2026-06-27T20:41:35-06:00
+
+Ahora alcanzo a ver la TUI, pero se cierra, seguido de varios mensajes de error en la consola, que sigue cerrándose automáticamente.
+
+Corrige.
+
+--- fecha y hora de fin: 2026-06-27T20:45:34-06:00
+--- proceso: P0007

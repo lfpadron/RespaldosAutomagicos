@@ -1,0 +1,408 @@
+--- proceso: P0003
+--- fecha y hora de inicio: 2026-06-27T19:43:12-06:00
+
+            )
+            return
+        try:
+            self.group_controller.delete_groups(group_ids)
+            self.group_selection.clear()
+            self._pending_delete_group_ids = None
+            self.refresh_groups()
+            self._set_status(f"Grupos eliminados: {len(group_ids)}.")
+        except GroupValidationError as exc:
+            self._set_status(exc.errors[0])
+
+    def _toggle_selected_group(self) -> None:
+        group_ids = self._selected_action_group_ids()
+        if not group_ids:
+            self._set_status("Selecciona al menos un grupo.")
+            return
+        try:
+            self.group_controller.toggle_groups(group_ids)
+            self.refresh_groups()
+            self._set_status(f"Grupos actualizados: {len(group_ids)}.")
+        except GroupValidationError as exc:
+            self._set_status(exc.errors[0])
+
+    def _duplicate_selected_group(self) -> None:
+        group_id = self._selected_group_id()
+        if group_id is None:
+            self._set_status("Selecciona un grupo.")
+            return
+        try:
+            self.group_controller.duplicate_group(group_id)
+            self.refresh_groups()
+            self._set_status("Grupo duplicado.")
+        except GroupValidationError as exc:
+            self._set_status(exc.errors[0])
+
+    def _scan_selected_group(self) -> None:
+        group_ids = self._selected_action_group_ids()
+        if not group_ids:
+            self._set_status("Selecciona al menos un grupo.")
+            return
+        try:
+            results = self.group_controller.scan_groups(group_ids)
+            self.refresh_groups()
+            self._set_status(
+                "Escaneo completado: "
+                f"{sum(result.created for result in results)} nuevos, "
+                f"{sum(result.reactivated for result in results)} reactivados, "
+                f"{sum(result.deactivated for result in results)} inactivos."
+            )
+        except GroupValidationError as exc:
+            self._set_status(exc.errors[0])
+
+    def _backup_selected_group(self) -> None:
+        group_ids = self._selected_action_group_ids()
+        if not group_ids:
+            self._set_status("Selecciona al menos un grupo.")
+            return
+        requested_group_ids = tuple(group_ids)
+        self.run_worker(
+            lambda: self.manual_backup_controller.run(requested_group_ids),
+            name="manual-backup",
+            group="manual-backup",
+            thread=True,
+        )
+        self.refresh_groups()
+        self._set_status(f"Respaldo manual iniciado para {len(group_ids)} grupo(s).")
+
+    def _load_restore_projects(self) -> None:
+        group_id = self._selected_restore_group_id()
+        if group_id is None:
+            self._set_status("Selecciona un grupo para restaurar.")
+            return
+        try:
+            projects = self.restore_controller.list_projects(group_id)
+        except RestoreControllerError as exc:
+            self._set_status(str(exc))
+            return
+
+        table = self.query_one("#restore-projects-table", DataTable)
+        table.clear()
+        self._restore_project_ids = [project.id for project in projects]
+        for project in projects:
+            table.add_row(str(project.id), project.relative_path, project.status)
+        if not projects:
+            table.add_row("-", "-", "-")
+        self._clear_restore_versions()
+        self.query_one("#restore-confirm", Checkbox).value = False
+        self.query_one("#restore-summary", Static).update("")
+
+    def _load_restore_versions(self) -> None:
+        group_id = self._selected_restore_group_id()
+        project_id = self._selected_restore_project_id()
+        if group_id is None or project_id is None:
+            self._set_status("Selecciona grupo y proyecto.")
+            return
+        versions = self.restore_controller.list_versions(
+            group_id=group_id,
+            watched_directory_id=project_id,
+        )
+        table = self.query_one("#restore-versions-table", DataTable)
+        table.clear()
+        self._restore_version_ids = [version.id for version in versions]
+        for version in versions:
+            table.add_row(
+                _format_dt(version.backup_time, version.timezone),
+                version.rolling_label,
+                version.short_hash,
+                _format_bytes(version.backup_size_bytes),
+                str(version.file_count or 0),
+                version.availability_label,
+            )
+        if not versions:
+            table.add_row("-", "-", "-", "-", "0", "-")
+        self.query_one("#restore-confirm", Checkbox).value = False
+        self.query_one("#restore-summary", Static).update("")
+
+    def _show_restore_summary(self) -> None:
+        version_id = self._selected_restore_version_id()
+        if version_id is None:
+            self._set_status("Selecciona una version.")
+            return
+        try:
+            summary = self.restore_controller.summary(version_id)
+        except RestoreControllerError as exc:
+            self._set_status(str(exc))
+            return
+        self.query_one("#restore-summary", Static).update(
+            "\n".join(
+                [
+                    f"Grupo: {summary.group_name}",
+                    f"Proyecto: {summary.project_name}",
+                    f"Respaldo: {summary.backup_name}",
+                    f"Fecha: {_format_dt(summary.backup_time, summary.timezone)}",
+                    f"Hash: {summary.content_hash or '-'}",
+                    f"Tamaño: {_format_bytes(summary.backup_size_bytes)}",
+                    f"Archivos: {summary.file_count or 0}",
+                    f"Disponible: {summary.availability_label}",
+                ]
+            )
+        )
+
+    def _restore_selected_version(self) -> None:
+        version_id = self._selected_restore_version_id()
+        if version_id is None:
+            self._set_status("Selecciona una version.")
+            return
+        if not self.query_one("#restore-confirm", Checkbox).value:
+            self._set_status("Confirma la restauracion.")
+            return
+        try:
+            result = self.restore_controller.restore(version_id)
+        except RestoreControllerError as exc:
+            self._set_status(str(exc))
+            return
+        if result.restored_path is None:
+            self._set_status(result.message)
+        else:
+            self._set_status(f"Restauracion completada: {result.restored_path}.")
+        self.query_one("#restore-confirm", Checkbox).value = False
+        self._load_restore_versions()
+        self.refresh_history()
+        self.refresh_audit()
+
+    def _activate_task_on_boot(self) -> None:
+        self._run_task_scheduler_action(
+            self.task_scheduler_controller.activate_on_boot
+        )
+
+    def _activate_task_now(self) -> None:
+        self._run_task_scheduler_action(self.task_scheduler_controller.activate_now)
+
+    def _disable_task_for_minutes(self, minutes: int) -> None:
+        self._run_task_scheduler_action(
+            lambda: self.task_scheduler_controller.disable_for_minutes(minutes)
+        )
+
+    def _disable_task_for_custom_hours(self) -> None:
+        value = self.query_one("#task-pause-hours-input", Input).value.strip()
+        if not value:
+            self._set_status("Captura cuántas horas desactivar.")
+            return
+        try:
+            hours = int(value)
+        except ValueError:
+            self._set_status("Las horas deben ser un número entero.")
+            return
+        self._run_task_scheduler_action(
+            lambda: self.task_scheduler_controller.disable_for_hours(hours)
+        )
+
+    def _disable_task_until_boot(self) -> None:
+        self._run_task_scheduler_action(
+            self.task_scheduler_controller.disable_until_next_boot
+        )
+
+    def _disable_task(self) -> None:
+        self._run_task_scheduler_action(self.task_scheduler_controller.disable)
+
+    def _run_task_scheduler_action(
+        self,
+        action: Callable[[], TaskSchedulerActionResult],
+    ) -> None:
+        try:
+            result = action()
+        except TaskSchedulerControllerError as exc:
+            self._set_status(f"Task Scheduler: {exc}")
+            self.refresh_audit()
+            return
+        self._set_status(result.message)
+        self.refresh_audit()
+
+    def _clear_restore_projects(self) -> None:
+        table = self.query_one("#restore-projects-table", DataTable)
+        table.clear()
+        self._restore_project_ids = []
+        table.add_row("-", "-", "-")
+
+    def _clear_restore_versions(self) -> None:
+        table = self.query_one("#restore-versions-table", DataTable)
+        table.clear()
+        self._restore_version_ids = []
+        table.add_row("-", "-", "-", "-", "0", "-")
+
+    def _select_all_groups(self) -> None:
+        self.group_selection.select_all(self._group_ids)
+        self._pending_delete_group_ids = None
+        self.refresh_groups()
+        self._set_status(f"Grupos seleccionados: {len(self._group_ids)}.")
+
+    def _clear_group_selection(self) -> None:
+        self.group_selection.clear()
+        self._pending_delete_group_ids = None
+        self.refresh_groups()
+        self._set_status("Selección limpia.")
+
+    def _toggle_highlighted_group_selection(self) -> None:
+        row = self.query_one("#groups-table", DataTable).cursor_row
+        self._toggle_group_selection_at_row(row)
+
+    def _toggle_group_selection_at_row(self, row: int) -> None:
+        if row < 0 or row >= len(self._group_ids):
+            return
+        self.group_selection.toggle(self._group_ids[row])
+        self._pending_delete_group_ids = None
+        self.refresh_groups()
+
+    def _selected_action_group_ids(self) -> list[int]:
+        return self.group_selection.selected_or_fallback(self._selected_group_id())
+
+    def _selected_group_id(self) -> int | None:
+        if not self._group_ids:
+            return None
+        table = self.query_one("#groups-table", DataTable)
+        row = table.cursor_row
+        if row < 0 or row >= len(self._group_ids):
+            return self._group_ids[0]
+        return self._group_ids[row]
+
+    def _selected_restore_group_id(self) -> int | None:
+        return self._selected_id_from_table(
+            self._restore_group_ids, "restore-groups-table"
+        )
+
+    def _selected_restore_project_id(self) -> int | None:
+        return self._selected_id_from_table(
+            self._restore_project_ids,
+            "restore-projects-table",
+        )
+
+    def _selected_restore_version_id(self) -> int | None:
+        return self._selected_id_from_table(
+            self._restore_version_ids,
+            "restore-versions-table",
+        )
+
+    def _selected_id_from_table(self, ids: list[int], table_id: str) -> int | None:
+        if not ids:
+            return None
+        table = self.query_one(f"#{table_id}", DataTable)
+        row = table.cursor_row
+        if row < 0 or row >= len(ids):
+            return ids[0]
+        return ids[row]
+
+    def _set_form_data(self, data: BackupGroupFormData) -> None:
+        self.query_one("#group-name", Input).value = data.name
+        self.query_one("#group-root", Input).value = data.root_directory
+        self.query_one("#group-destination", Input).value = data.destination_directory
+        self.query_one("#group-timezone", Input).value = data.timezone
+        self.query_one("#group-scan-interval", Input).value = str(
+            data.scan_interval_minutes
+        )
+        self.query_one("#group-stabilization", Input).value = str(
+            data.stabilization_minutes
+        )
+        self.query_one("#group-keep", Input).value = str(data.backups_to_keep)
+        self.query_one("#group-days", Input).value = str(data.days_to_keep)
+        self.query_one("#group-compression", Input).value = str(data.compression_level)
+        self.query_one("#group-enabled", Checkbox).value = data.enabled
+
+    def _read_form_data(self) -> BackupGroupFormData:
+        return BackupGroupFormData(
+            name=self.query_one("#group-name", Input).value,
+            root_directory=self.query_one("#group-root", Input).value,
+            destination_directory=self.query_one("#group-destination", Input).value,
+            timezone=self.query_one("#group-timezone", Input).value,
+            scan_interval_minutes=self._read_int("group-scan-interval"),
+            stabilization_minutes=self._read_int("group-stabilization"),
+            backups_to_keep=self._read_int("group-keep"),
+            days_to_keep=self._read_int("group-days"),
+            compression_level=self._read_int("group-compression"),
+            enabled=self.query_one("#group-enabled", Checkbox).value,
+        )
+
+    def _read_int(self, field_id: str) -> int:
+        value = self.query_one(f"#{field_id}", Input).value.strip()
+        if not value:
+            raise ValueError("Todos los campos numéricos son obligatorios.")
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError("Los campos numéricos deben contener enteros.") from exc
+
+    def _set_status(self, message: str) -> None:
+        self.query_one("#status", Static).update(message)
+
+
+def _format_dt(value: datetime | None, timezone_name: str = DEFAULT_TIMEZONE) -> str:
+    return format_local_datetime(value, timezone_name)
+
+
+def _selection_marker(selected: bool) -> str:
+    return "X" if selected else ""
+
+
+def _format_bytes(value: int | None) -> str:
+    if value is None:
+        return "0 B"
+    if value < 1024:
+        return f"{value} B"
+    if value < 1024 * 1024:
+        return f"{value / 1024:.1f} KB"
+    return f"{value / (1024 * 1024):.1f} MB"
+
+
+def _availability_label(retained: bool, deletion_reason: str | None) -> str:
+    if retained:
+        return "Sí"
+    if deletion_reason == "RETENTION_BY_COUNT":
+        return "No - cantidad"
+    if deletion_reason == "RETENTION_BY_AGE":
+        return "No - antigüedad"
+    return "No"
+
+
+def main() -> None:
+    """Run the Textual TUI."""
+    RespaldosAutomagicosTUI().run()
+
+codex
+El `.bat` está abriendo la TUI correcta: `uv run respaldos-automagicos`, que apunta a `src/respaldos_automagicos/tui/app.py`.
+
+El problema es que ahí no existe ningún botón llamado **“Forzar respaldo”**. El botón actual se llama **“Respaldar ahora”** y está al final de la barra de grupos:
+
+```python
+yield Button("Respaldar ahora", id="group-backup")
+```
+
+Ese botón ejecuta `_backup_selected_group()`, o sea, es la acción de respaldo manual/forzado.
+
+Para que salga como quieres, cambia esa línea en `src/respaldos_automagicos/tui/app.py` por:
+
+```python
+yield Button("Forzar respaldo", id="group-backup", variant="warning")
+```
+
+También conviene moverlo más a la izquierda en la toolbar, porque ahora está después de muchos botones y puede quedar fuera de vista si la ventana abierta por doble clic es angosta.
+
+No pude aplicar el cambio directamente porque este entorno está en modo solo lectura.
+CORRECTO: el proceso con PID 6092 (proceso secundario de PID 15952)
+ha sido terminado.
+tokens used
+145.746
+El `.bat` está abriendo la TUI correcta: `uv run respaldos-automagicos`, que apunta a `src/respaldos_automagicos/tui/app.py`.
+
+El problema es que ahí no existe ningún botón llamado **“Forzar respaldo”**. El botón actual se llama **“Respaldar ahora”** y está al final de la barra de grupos:
+
+```python
+yield Button("Respaldar ahora", id="group-backup")
+```
+
+Ese botón ejecuta `_backup_selected_group()`, o sea, es la acción de respaldo manual/forzado.
+
+Para que salga como quieres, cambia esa línea en `src/respaldos_automagicos/tui/app.py` por:
+
+```python
+yield Button("Forzar respaldo", id="group-backup", variant="warning")
+```
+
+También conviene moverlo más a la izquierda en la toolbar, porque ahora está después de muchos botones y puede quedar fuera de vista si la ventana abierta por doble clic es angosta.
+
+No pude aplicar el cambio directamente porque este entorno está en modo solo lectura.
+
+--- fecha y hora de fin: 2026-06-27T19:46:31-06:00
+--- proceso: P0003

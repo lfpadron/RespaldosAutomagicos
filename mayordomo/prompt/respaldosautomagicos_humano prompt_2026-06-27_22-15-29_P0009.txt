@@ -1,0 +1,15 @@
+--- proceso: P0009
+--- fecha y hora de inicio: 2026-06-27T22:15:29-06:00
+
+
+pero `on_button_pressed()` no tiene ninguna rama para `group-force-backup`. El botón que sí ejecuta algo es **“Respaldar ahora”**, con id `group-backup`, que llama a `_backup_selected_group()`.
+
+Además, el flujo existente de respaldo manual no es realmente “forzado”: en [backup_service.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/services/backup_service.py), si el hash del contenido no cambió respecto al último respaldo, registra `NO_EFFECTIVE_CHANGES` y no crea un ZIP nuevo.
+
+Resumen: **“Forzar respaldo” parece un botón pendiente de implementar o mal cableado**. No inicia worker, no actualiza estado, no escribe auditoría y no crea respaldos.
+
+
+Haz los cambios necesarios para implementar el botón "Forzar respaldo" correctamente.
+
+--- fecha y hora de fin: 2026-06-27T22:18:52-06:00
+--- proceso: P0009

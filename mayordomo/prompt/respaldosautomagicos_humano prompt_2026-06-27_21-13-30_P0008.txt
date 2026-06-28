@@ -1,0 +1,7 @@
+--- proceso: P0008
+--- fecha y hora de inicio: 2026-06-27T21:13:30-06:00
+
+Revisa la carpeta de proyecto e indícame qué hace el botón "Forzar respaldo" de la TUI.
+
+--- fecha y hora de fin: 2026-06-27T21:16:49-06:00
+--- proceso: P0008

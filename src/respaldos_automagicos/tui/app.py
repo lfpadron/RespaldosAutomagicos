@@ -380,6 +380,7 @@ class RespaldosAutomagicosTUI(App[None]):
                 yield Button("Duplicar grupo", id="group-duplicate")
                 yield Button("Escanear proyectos", id="group-scan")
                 yield Button("Respaldar ahora", id="group-backup")
+                yield Button("Forzar respaldo", id="group-force-backup")
             groups_table: DataTable[str] = DataTable(id="groups-table")
             groups_table.cursor_type = "row"
             groups_table.add_columns(
@@ -779,9 +780,7 @@ class RespaldosAutomagicosTUI(App[None]):
         self.refresh_audit()
 
     def _activate_task_on_boot(self) -> None:
-        self._run_task_scheduler_action(
-            self.task_scheduler_controller.activate_on_boot
-        )
+        self._run_task_scheduler_action(self.task_scheduler_controller.activate_on_boot)
 
     def _activate_task_now(self) -> None:
         self._run_task_scheduler_action(self.task_scheduler_controller.activate_now)

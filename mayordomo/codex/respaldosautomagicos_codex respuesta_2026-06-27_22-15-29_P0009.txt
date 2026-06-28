@@ -1,0 +1,430 @@
+--- proceso: P0009
+--- fecha y hora de inicio: 2026-06-27T22:15:29-06:00
+
+    "ManualBackupJobController",
+    "ManualBackupJobError",
+    "ManualBackupJobSummary",
+    "ManualBackupState",
+    "ProjectScanResult",
+    "RestoreController",
+    "RestoreControllerError",
+    "RestoreGroupItem",
+    "RestoreProjectItem",
+    "RestoreSummary",
+    "RestoreVersionItem",
+    "TaskSchedulerActionResult",
+    "TaskSchedulerController",
+    "TaskSchedulerControllerError",
+]
+
+warning: in-process app-server event stream lagged; dropped 1 events
+warning: in-process app-server event stream lagged; dropped 12 events
+warning: in-process app-server event stream lagged; dropped 1 events
+warning: in-process app-server event stream lagged; dropped 1 events
+ succeeded in 990ms:
+"""Backup history repository."""
+
+from datetime import datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
+
+from respaldos_automagicos.models.backup_history import BackupHistory
+from respaldos_automagicos.repositories.base import BaseRepository
+
+
+class BackupHistoryRepository(BaseRepository[BackupHistory]):
+    """Repository for backup history records."""
+
+    def add_record(
+        self,
+        *,
+        group_id: int,
+        watched_directory_id: int | None,
+        backup_name: str,
+        backup_path: str,
+        backup_time: datetime,
+        backup_size_bytes: int | None,
+        file_count: int | None,
+        content_hash: str | None,
+        status: str,
+        duration_ms: int | None,
+        message: str | None = None,
+    ) -> BackupHistory:
+        """Add a backup history row."""
+        record = BackupHistory(
+            group_id=group_id,
+            watched_directory_id=watched_directory_id,
+            backup_name=backup_name,
+            backup_path=backup_path,
+            backup_time=backup_time,
+            backup_size_bytes=backup_size_bytes,
+            file_count=file_count,
+            content_hash=content_hash,
+            status=status,
+            duration_ms=duration_ms,
+            message=message,
+        )
+        return self.add(record)
+
+    def list_by_group(self, group_id: int) -> list[BackupHistory]:
+        """Return backup history rows for a group."""
+        statement = (
+            select(BackupHistory)
+            .where(BackupHistory.group_id == group_id)
+            .order_by(BackupHistory.backup_time.desc())
+        )
+        return list(self.session.scalars(statement))
+
+    def list_retained_successful_for_project(
+        self,
+        *,
+        group_id: int,
+        watched_directory_id: int,
+    ) -> list[BackupHistory]:
+        """Return retained successful backups for one group/project newest first."""
+        statement = (
+            select(BackupHistory)
+            .where(
+                BackupHistory.group_id == group_id,
+                BackupHistory.watched_directory_id == watched_directory_id,
+                BackupHistory.status == "BACKUP_OK",
+                BackupHistory.retained.is_(True),
+            )
+            .order_by(BackupHistory.backup_time.desc(), BackupHistory.id.desc())
+        )
+        return list(self.session.scalars(statement))
+
+    def mark_deleted(
+        self,
+        backup_history: BackupHistory,
+        *,
+        deleted_at: datetime,
+        deletion_reason: str,
+    ) -> BackupHistory:
+        """Mark a history row as deleted by retention."""
+        backup_history.retained = False
+        backup_history.deleted_at = deleted_at
+        backup_history.deletion_reason = deletion_reason
+        return backup_history
+
+    def get_available_successful(self, backup_history_id: int) -> BackupHistory | None:
+        """Return a retained successful backup by id."""
+        statement = (
+            select(BackupHistory)
+            .options(
+                selectinload(BackupHistory.group),
+                selectinload(BackupHistory.watched_directory),
+            )
+            .where(
+                BackupHistory.id == backup_history_id,
+                BackupHistory.status == "BACKUP_OK",
+                BackupHistory.retained.is_(True),
+            )
+        )
+        return self.session.scalar(statement)
+
+    def list_available_for_project(
+        self,
+        *,
+        group_id: int,
+        watched_directory_id: int,
+    ) -> list[BackupHistory]:
+        """Return retained successful backups for restore selection."""
+        statement = (
+            select(BackupHistory)
+            .where(
+                BackupHistory.group_id == group_id,
+                BackupHistory.watched_directory_id == watched_directory_id,
+                BackupHistory.status == "BACKUP_OK",
+                BackupHistory.retained.is_(True),
+            )
+            .order_by(BackupHistory.backup_time.desc(), BackupHistory.id.desc())
+        )
+        return list(self.session.scalars(statement))
+
+    def mark_restored(
+        self,
+        backup_history: BackupHistory,
+        *,
+        restored_at: datetime,
+    ) -> BackupHistory:
+        """Update restore metadata after a successful restore."""
+        backup_history.last_restored_at = restored_at
+        backup_history.restore_count += 1
+        return backup_history
+
+    def list_recent(
+        self,
+        *,
+        group_id: int | None = None,
+        limit: int = 200,
+    ) -> list[BackupHistory]:
+        """Return recent backup history rows."""
+        statement = (
+            select(BackupHistory)
+            .options(
+                selectinload(BackupHistory.group),
+                selectinload(BackupHistory.watched_directory),
+            )
+            .order_by(BackupHistory.backup_time.desc())
+            .limit(limit)
+        )
+        if group_id is not None:
+            statement = statement.where(BackupHistory.group_id == group_id)
+        return list(self.session.scalars(statement))
+
+    def count_by_group_and_status(self, group_id: int, status: str) -> int:
+        """Return the number of history rows for a group and status."""
+        statement = (
+            select(func.count())
+            .select_from(BackupHistory)
+            .where(
+                BackupHistory.group_id == group_id,
+                BackupHistory.status == status,
+            )
+        )
+        return int(self.session.scalar(statement) or 0)
+
+    def count_all(self) -> int:
+        """Return the number of backup history rows."""
+        statement = select(func.count()).select_from(BackupHistory)
+        return int(self.session.scalar(statement) or 0)
+
+ succeeded in 1015ms:
+"""Watched directory repository."""
+
+from datetime import datetime
+
+from sqlalchemy import func, select
+
+from respaldos_automagicos.models.enums import WatchedDirectoryStatus
+from respaldos_automagicos.models.watched_directory import WatchedDirectory
+from respaldos_automagicos.repositories.base import BaseRepository
+
+
+class WatchedDirectoryRepository(BaseRepository[WatchedDirectory]):
+    """Repository for watched directories."""
+
+    def get(self, watched_directory_id: int) -> WatchedDirectory | None:
+        """Return a watched directory by id."""
+        return self.session.get(WatchedDirectory, watched_directory_id)
+
+    def get_by_group_and_relative_path(
+        self,
+        group_id: int,
+        relative_path: str,
+    ) -> WatchedDirectory | None:
+        """Return a watched directory for a group and relative path."""
+        statement = select(WatchedDirectory).where(
+            WatchedDirectory.group_id == group_id,
+            WatchedDirectory.relative_path == relative_path,
+        )
+        return self.session.scalar(statement)
+
+    def get_or_create(
+        self,
+        group_id: int,
+        relative_path: str,
+    ) -> WatchedDirectory:
+        """Return a watched directory, creating it when missing."""
+        watched_directory = self.get_by_group_and_relative_path(group_id, relative_path)
+        if watched_directory is not None:
+            return watched_directory
+
+        watched_directory = WatchedDirectory(
+            group_id=group_id,
+            relative_path=relative_path,
+        )
+        self.session.add(watched_directory)
+        self.session.flush()
+        return watched_directory
+
+    def mark_pending(
+        self,
+        watched_directory: WatchedDirectory,
+        changed_at: datetime,
+    ) -> WatchedDirectory:
+        """Mark a watched directory as pending after a detected change."""
+        watched_directory.pending_backup = True
+        watched_directory.backup_running = False
+        watched_directory.last_change_at = changed_at
+        watched_directory.status = WatchedDirectoryStatus.PENDING.value
+        return watched_directory
+
+    def clear_pending(self, watched_directory: WatchedDirectory) -> WatchedDirectory:
+        """Clear the pending flag and return the directory to normal state."""
+        watched_directory.pending_backup = False
+        watched_directory.backup_running = False
+        watched_directory.status = WatchedDirectoryStatus.NORMAL.value
+        return watched_directory
+
+    def mark_backup_running(
+        self,
+        watched_directory: WatchedDirectory,
+    ) -> WatchedDirectory:
+        """Mark a watched directory as actively being backed up."""
+        watched_directory.backup_running = True
+        watched_directory.status = WatchedDirectoryStatus.BACKING_UP.value
+        return watched_directory
+
+    def mark_error(self, watched_directory: WatchedDirectory) -> WatchedDirectory:
+        """Mark a watched directory as failed."""
+        watched_directory.pending_backup = False
+        watched_directory.backup_running = False
+        watched_directory.status = WatchedDirectoryStatus.ERROR.value
+        return watched_directory
+
+    def update_status(
+        self,
+        watched_directory: WatchedDirectory,
+        status: WatchedDirectoryStatus,
+    ) -> WatchedDirectory:
+        """Update a watched directory status."""
+        watched_directory.status = status.value
+        return watched_directory
+
+    def list_pending(self) -> list[WatchedDirectory]:
+        """Return watched directories marked as pending in the database."""
+        statement = select(WatchedDirectory).where(
+            WatchedDirectory.pending_backup.is_(True)
+        )
+        return list(self.session.scalars(statement))
+
+    def list_by_group(self, group_id: int) -> list[WatchedDirectory]:
+        """Return watched directories for a group."""
+        statement = (
+            select(WatchedDirectory)
+            .where(WatchedDirectory.group_id == group_id)
+            .order_by(WatchedDirectory.relative_path)
+        )
+        return list(self.session.scalars(statement))
+
+    def mark_inactive(self, watched_directory: WatchedDirectory) -> WatchedDirectory:
+        """Mark a disappeared watched directory as inactive."""
+        watched_directory.pending_backup = False
+        watched_directory.backup_running = False
+        watched_directory.status = WatchedDirectoryStatus.IGNORED.value
+        return watched_directory
+
+    def count_all(self) -> int:
+        """Return the number of watched directory rows."""
+        statement = select(func.count()).select_from(WatchedDirectory)
+        return int(self.session.scalar(statement) or 0)
+
+codex
+Voy a hacer tres cambios acotados: `BackupService.create_backup(..., force=False)`, `ManualBackupJobController.run(..., force=False)` y una rama TUI para `group-force-backup`. Además añadiré pruebas para que el segundo respaldo idéntico genere ZIP cuando `force=True`.
+  ✓ Localizar handlers UI y IDs de botones
+  ✓ Revisar API de respaldo, auditoría y worker
+  ✓ Diseñar cambio mínimo para respaldo forzado
+  → Aplicar cambios y verificar
+codex
+Haré la edición ahora. La bandera `force` no cambia el flujo programado: por defecto sigue omitiendo respaldos sin cambios; solo el botón nuevo la activa desde el job manual.
+2026-06-28T04:18:18.928157Z ERROR codex_core::tools::router: error=patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings
+codex
+El intento de edición fue bloqueado por el sandbox: la sesión está en modo `read-only` y la política de aprobación está en `never`, así que no puedo escribir en el workspace desde aquí. Voy a dejar el cambio exacto y verificable en formato de parche.
+El sandbox rechazó apply_patch por estar en modo read-only sin aprobaciones disponibles.
+  ✓ Localizar handlers UI y IDs de botones
+  ✓ Revisar API de respaldo, auditoría y worker
+  ✓ Diseñar cambio mínimo para respaldo forzado
+  • Aplicar cambios y verificar
+codex
+No pude aplicar los cambios: el workspace está en modo `read-only` y `apply_patch` fue rechazado por la política de aprobación `never`. No hay archivos modificados ni tests ejecutados.
+
+El cambio correcto es este:
+
+- En [backup_service.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/services/backup_service.py), agregar `force: bool = False` a `create_backup()` y `_create_backup_in_session()`, y cambiar:
+
+```python
+if content_hash == watched_directory.last_content_hash:
+```
+
+por:
+
+```python
+if not force and content_hash == watched_directory.last_content_hash:
+```
+
+- En [manual_backup.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/controllers/manual_backup.py), hacer que `ManualBackupJobController.run(group_ids, *, force=False)` pase `force` hasta `_run_group()` y luego a:
+
+```python
+self._backup_service.create_backup(group, watched_directory, force=force)
+```
+
+También conviene incluir `Forzado={force}` en los detalles de auditoría del job manual.
+
+- En [app.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/tui/app.py), cablear el botón:
+
+```python
+elif button_id == "group-force-backup":
+    self._backup_selected_group(force=True)
+```
+
+y cambiar `_backup_selected_group()` a:
+
+```python
+def _backup_selected_group(self, *, force: bool = False) -> None:
+    ...
+    self.run_worker(
+        lambda: self.manual_backup_controller.run(requested_group_ids, force=force),
+        name="manual-backup",
+        group="manual-backup",
+        thread=True,
+    )
+    ...
+```
+
+Con eso, “Respaldar ahora” conserva el comportamiento actual y “Forzar respaldo” sí crea un ZIP aunque el hash no haya cambiado.
+CORRECTO: el proceso con PID 6288 (proceso secundario de PID 15916)
+ha sido terminado.
+tokens used
+111.047
+No pude aplicar los cambios: el workspace está en modo `read-only` y `apply_patch` fue rechazado por la política de aprobación `never`. No hay archivos modificados ni tests ejecutados.
+
+El cambio correcto es este:
+
+- En [backup_service.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/services/backup_service.py), agregar `force: bool = False` a `create_backup()` y `_create_backup_in_session()`, y cambiar:
+
+```python
+if content_hash == watched_directory.last_content_hash:
+```
+
+por:
+
+```python
+if not force and content_hash == watched_directory.last_content_hash:
+```
+
+- En [manual_backup.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/controllers/manual_backup.py), hacer que `ManualBackupJobController.run(group_ids, *, force=False)` pase `force` hasta `_run_group()` y luego a:
+
+```python
+self._backup_service.create_backup(group, watched_directory, force=force)
+```
+
+También conviene incluir `Forzado={force}` en los detalles de auditoría del job manual.
+
+- En [app.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/tui/app.py), cablear el botón:
+
+```python
+elif button_id == "group-force-backup":
+    self._backup_selected_group(force=True)
+```
+
+y cambiar `_backup_selected_group()` a:
+
+```python
+def _backup_selected_group(self, *, force: bool = False) -> None:
+    ...
+    self.run_worker(
+        lambda: self.manual_backup_controller.run(requested_group_ids, force=force),
+        name="manual-backup",
+        group="manual-backup",
+        thread=True,
+    )
+    ...
+```
+
+Con eso, “Respaldar ahora” conserva el comportamiento actual y “Forzar respaldo” sí crea un ZIP aunque el hash no haya cambiado.
+
+--- fecha y hora de fin: 2026-06-27T22:18:52-06:00
+--- proceso: P0009

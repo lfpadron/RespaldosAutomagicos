@@ -1,0 +1,333 @@
+--- proceso: P0004
+--- fecha y hora de inicio: 2026-06-27T20:15:49-06:00
+
+            )
+        if not groups:
+            table.add_row("-", "-", "-", "-", "-", "-", "0", "0", "-", "-", "-", "-")
+        if groups:
+            if previous_group_id in self._group_ids:
+                next_row = self._group_ids.index(previous_group_id)
+            elif previous_row >= 0:
+                next_row = min(previous_row, len(groups) - 1)
+            else:
+                next_row = 0
+            table.move_cursor(
+                row=next_row,
+                column=max(previous_column, 0),
+                animate=False,
+            )
+
+    def refresh_restore_groups(self) -> None:
+        """Refresh restore group options."""
+        table = self.query_one("#restore-groups-table", DataTable)
+        table.clear()
+        groups = self.restore_controller.list_groups()
+        self._restore_group_ids = [group.id for group in groups]
+        for group in groups:
+            table.add_row(str(group.id), group.name)
+        if not groups:
+            table.add_row("-", "-")
+        self._clear_restore_projects()
+        self._clear_restore_versions()
+        self.query_one("#restore-confirm", Checkbox).value = False
+        self.query_one("#restore-summary", Static).update("")
+
+    def refresh_history(self) -> None:
+        """Refresh the backup history table."""
+        table = self.query_one("#history-table", DataTable)
+        table.clear()
+        group_filter = self.query_one("#history-group-filter", Input).value.strip()
+        group_id = int(group_filter) if group_filter.isdigit() else None
+        rows = self.history_controller.list_history(group_id=group_id)
+        if not self._history_desc:
+            rows = list(reversed(rows))
+        for row in rows:
+            table.add_row(
+                _format_dt(row.backup_time, row.timezone),
+                row.group_name,
+                row.project_name,
+                row.status,
+                str(row.duration_ms or 0),
+                str(row.backup_size_bytes or 0),
+                (row.content_hash or "-")[:12],
+                _availability_label(row.retained, row.deletion_reason),
+            )
+
+    def refresh_audit(self) -> None:
+        """Refresh the audit table."""
+        table = self.query_one("#audit-table", DataTable)
+        table.clear()
+        group_filter = self.query_one("#audit-group-filter", Input).value.strip()
+        action = self.query_one("#audit-action-filter", Input).value.strip() or None
+        result = self.query_one("#audit-result-filter", Input).value.strip() or None
+        group_id = int(group_filter) if group_filter.isdigit() else None
+        for row in self.audit_controller.list_audit(
+            group_id=group_id,
+            action=action,
+            result=result,
+        ):
+            table.add_row(
+                _format_dt(row.timestamp, row.timezone),
+                str(row.group_id or "-"),
+                str(row.watched_directory_id or "-"),
+                row.action,
+                row.result,
+                row.details or "-",
+            )
+
+    def refresh_config(self) -> None:
+        """Refresh the read-only configuration table."""
+        table = self.query_one("#config-table", DataTable)
+        table.clear()
+        summary = self.config_controller.summary()
+        table.add_row("Ruta SQLite", summary.database_url)
+        table.add_row("Versión", summary.version)
+        table.add_row("Python", summary.python_version)
+        table.add_row("uv", summary.uv_version)
+        table.add_row("Número de grupos", str(summary.group_count))
+        table.add_row("Número de proyectos", str(summary.project_count))
+        table.add_row("Número de respaldos", str(summary.backup_count))
+
+    def _groups_panel(self) -> ComposeResult:
+        with Vertical(classes="panel", id="groups-panel"):
+            yield Static("Grupos de respaldo")
+            with Horizontal(classes="toolbar"):
+                yield Button("Seleccionar todos", id="group-select-all")
+                yield Button("Limpiar selección", id="group-clear-selection")
+                yield Button("Crear", id="group-new")
+                yield Button("Editar", id="group-edit")
+                yield Button("Eliminar", id="group-delete")
+                yield Button("Activar/Desactivar", id="group-toggle")
+                yield Button("Duplicar grupo", id="group-duplicate")
+                yield Button("Escanear proyectos", id="group-scan")
+                yield Button("Respaldar ahora", id="group-backup")
+                yield Button("Forzar respaldo", id="group-backup", variant="warning")
+            groups_table: DataTable[str] = DataTable(id="groups-table")
+            groups_table.cursor_type = "row"
+            groups_table.add_columns(
+                "Seleccionado",
+                "Nombre",
+                "Activo",
+                "Zona horaria",
+                "Raíz",
+                "Destino",
+                "Número de proyectos",
+                "Pendientes",
+                "Último respaldo",
+                "Próximo escaneo",
+                "Estado",
+                "Progreso",
+            )
+            yield groups_table
+            yield from self._group_form()
+
+    def _group_form(self) -> ComposeResult:
+        with Vertical(classes="hidden", id="group-form"):
+            yield Static("Grupo de respaldo")
+            yield Input(placeholder="Nombre", id="group-name")
+            yield Input(placeholder="Directorio raíz", id="group-root")
+            yield Input(placeholder="Directorio destino", id="group-destination")
+            yield Input(
+                placeholder="Zona horaria (ej. America/Mexico_City)",
+                id="group-timezone",
+            )
+            yield Input(placeholder="Intervalo de escaneo", id="group-scan-interval")
+            yield Input(
+                placeholder="Tiempo de estabilización",
+                id="group-stabilization",
+            )
+            yield Input(placeholder="Respaldos a conservar", id="group-keep")
+            yield Input(placeholder="Días de conservación", id="group-days")
+            yield Input(placeholder="Nivel de compresión", id="group-compression")
+            yield Checkbox("Activo", id="group-enabled")
+            with Horizontal(classes="toolbar"):
+                yield Button("Guardar", id="form-save", variant="primary")
+                yield Button("Cancelar", id="form-cancel")
+
+    def _restore_panel(self) -> ComposeResult:
+        with Vertical(classes="panel hidden", id="restore-panel"):
+            yield Static("Restaurar")
+            with Horizontal(classes="toolbar"):
+                yield Button("Actualizar", id="restore-refresh")
+                yield Button("Cargar proyectos", id="restore-load-projects")
+                yield Button("Cargar versiones", id="restore-load-versions")
+                yield Button("Resumen", id="restore-summary-action")
+                yield Button("Restaurar", id="restore-run", variant="warning")
+            yield Static("Grupo")
+            groups_table: DataTable[str] = DataTable(id="restore-groups-table")
+            groups_table.add_columns("ID", "Nombre")
+            yield groups_table
+            yield Static("Proyecto")
+            projects_table: DataTable[str] = DataTable(id="restore-projects-table")
+            projects_table.add_columns("ID", "Proyecto", "Estado")
+            yield projects_table
+            yield Static("Versión")
+            versions_table: DataTable[str] = DataTable(id="restore-versions-table")
+            versions_table.add_columns(
+                "Fecha",
+                "Rxxx",
+                "Hash corto",
+                "Tamaño",
+                "Archivos",
+                "Disponible",
+            )
+            yield versions_table
+            yield Checkbox("Confirmar restauracion", id="restore-confirm")
+            yield Static("", id="restore-summary")
+
+    def _history_panel(self) -> ComposeResult:
+        with Vertical(classes="panel hidden", id="history-panel"):
+            yield Static("Historial")
+            with Horizontal(classes="toolbar"):
+                yield Input(placeholder="ID de grupo", id="history-group-filter")
+                yield Button("Actualizar", id="history-refresh")
+                yield Button("Orden fecha", id="history-sort")
+            history_table: DataTable[str] = DataTable(id="history-table")
+            history_table.add_columns(
+                "Fecha",
+                "Grupo",
+                "Proyecto",
+                "Resultado",
+                "Duración",
+                "Tamaño",
+                "Hash abreviado",
+                "Disponible",
+            )
+            yield history_table
+
+    def _audit_panel(self) -> ComposeResult:
+        with Vertical(classes="panel hidden", id="audit-panel"):
+            yield Static("Auditoría")
+            with Horizontal(classes="toolbar"):
+                yield Input(placeholder="ID de grupo", id="audit-group-filter")
+                yield Input(placeholder="Acción", id="audit-action-filter")
+                yield Input(placeholder="Resultado", id="audit-result-filter")
+                yield Button("Actualizar", id="audit-refresh")
+            audit_table: DataTable[str] = DataTable(id="audit-table")
+            audit_table.add_columns(
+                "Fecha",
+                "Grupo",
+                "Directorio",
+                "Acción",
+                "Resultado",
+                "Detalles",
+            )
+            yield audit_table
+
+    def _config_panel(self) -> ComposeResult:
+        with Vertical(classes="panel hidden", id="config-panel"):
+            yield Static("Configuración")
+            yield Button("Actualizar", id="config-refresh")
+            config_table: DataTable[str] = DataTable(id="config-table")
+            config_table.add_columns("Campo", "Valor")
+            yield config_table
+            yield Static("Task Scheduler")
+            with Horizontal(classes="toolbar"):
+                yield Button("Activar al iniciar sesión", id="task-enable-boot")
+                yield Button("Activar ahora", id="task-run-now")
+                yield Button("Desactivar 30 min", id="task-pause-30")
+                yield Button("Desactivar 1 hora", id="task-pause-60")
+                yield Button("Desactivar 3 horas", id="task-pause-180")
+            with Horizontal(classes="toolbar"):
+                yield Input(placeholder="Horas", id="task-pause-hours-input")
+                yield Button("Desactivar N horas", id="task-pause-hours")
+                yield Button("Hasta siguiente inicio de sesión", id="task-pause-boot")
+                yield Button("Desactivar", id="task-disable", variant="warning")
+
+    def _about_panel(self) -> ComposeResult:
+        with Vertical(classes="panel hidden", id="about-panel"):
+            yield Static("Acerca de")
+            yield Static("RespaldosAutomágicos")
+            yield Static(f"Versión {self.settings.app_version}")
+
+codex
+El cambio mínimo sería eliminar o renombrar el segundo botón `Forzar respaldo`; actualmente tiene el mismo `id` que `Respaldar ahora`, y Textual exige IDs únicos. Voy a obtener líneas exactas para dejarte la referencia precisa.
+exec
+"C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.3.0_x64__8wekyb3d8bbwe\\pwsh.exe" -Command "uv run python -c 'from pathlib import Path; p=Path(\"src/respaldos_automagicos/tui/app.py\");
+for i,line in enumerate(p.read_text(encoding=\"utf-8\").splitlines(),1):
+    if \"group-backup\" in line or \"def _groups_panel\" in line:
+        print(f\"{i}: {line}\")'" in C:\Users\lfpad\Documents\Scripts\RespaldosAutomagicos
+ succeeded in 562ms:
+183:         elif button_id == "group-backup":
+370:     def _groups_panel(self) -> ComposeResult:
+382:                 yield Button("Respaldar ahora", id="group-backup")
+383:                 yield Button("Forzar respaldo", id="group-backup", variant="warning")
+warning: `VIRTUAL_ENV=C:\Users\lfpad\Documents\Scripts\MayordomoCodex\.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+
+codex
+Además hay un segundo efecto: en esta reproducción `uv run respaldos-automagicos` devolvió código `0` aunque imprimió el traceback, por eso el `if errorlevel 1` del `.bat` no ejecuta `pause`. La causa principal sigue siendo el ID duplicado; el `.bat` se puede endurecer aparte si quieres que siempre deje ver la salida.
+codex
+Voy a confirmar si existe una ruta real para “Forzar respaldo”. Si no existe, la corrección más conservadora es eliminar ese botón duplicado en lugar de inventar una acción nueva incompleta.
+exec
+"C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.3.0_x64__8wekyb3d8bbwe\\pwsh.exe" -Command "uv run python -c 'from pathlib import Path; 
+for p in Path(\"src/respaldos_automagicos\").rglob(\"*.py\"):
+    text=p.read_text(encoding=\"utf-8\")
+    if \"force\" in text.lower() or \"forzar\" in text.lower():
+        for i,line in enumerate(text.splitlines(),1):
+            if \"force\" in line.lower() or \"forzar\" in line.lower():
+                print(f\"{p}:{i}: {line.strip()}\")'" in C:\Users\lfpad\Documents\Scripts\RespaldosAutomagicos
+ succeeded in 594ms:
+src\respaldos_automagicos\task_scheduler\service.py:193: "-Force | Out-Null"
+src\respaldos_automagicos\tui\app.py:383: yield Button("Forzar respaldo", id="group-backup", variant="warning")
+warning: `VIRTUAL_ENV=C:\Users\lfpad\Documents\Scripts\MayordomoCodex\.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+
+codex
+No pude detener el servicio desde esta sesión: la política del entorno bloqueó `schtasks /End /TN RespaldosAutomagicos` y también las consultas de procesos. No hice cambios.
+
+Encontré la causa del cierre de `abrir_tui.bat`: la TUI falla con:
+
+```text
+MountError: Tried to insert 2 widgets with the same ID 'group-backup'
+```
+
+Está en [app.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/tui/app.py:382):
+
+```python
+yield Button("Respaldar ahora", id="group-backup")
+yield Button("Forzar respaldo", id="group-backup", variant="warning")
+```
+
+Además, no existe implementación real de “Forzar respaldo”; solo ese botón. La corrección mínima será eliminar la segunda línea.
+
+Para detener el servicio localmente antes de corregir, ejecuta en PowerShell o CMD:
+
+```bat
+schtasks /End /TN RespaldosAutomagicos
+schtasks /Change /TN RespaldosAutomagicos /DISABLE
+schtasks /Delete /TN RespaldosAutomagicosReactivar /F
+```
+
+También vi por qué la ventana se cierra: `uv run respaldos-automagicos` imprimió el traceback pero devolvió código `0`, así que el `if errorlevel 1` del `.bat` no activa el `pause`.
+CORRECTO: el proceso con PID 28336 (proceso secundario de PID 9112)
+ha sido terminado.
+tokens used
+145.773
+No pude detener el servicio desde esta sesión: la política del entorno bloqueó `schtasks /End /TN RespaldosAutomagicos` y también las consultas de procesos. No hice cambios.
+
+Encontré la causa del cierre de `abrir_tui.bat`: la TUI falla con:
+
+```text
+MountError: Tried to insert 2 widgets with the same ID 'group-backup'
+```
+
+Está en [app.py](C:/Users/lfpad/Documents/Scripts/RespaldosAutomagicos/src/respaldos_automagicos/tui/app.py:382):
+
+```python
+yield Button("Respaldar ahora", id="group-backup")
+yield Button("Forzar respaldo", id="group-backup", variant="warning")
+```
+
+Además, no existe implementación real de “Forzar respaldo”; solo ese botón. La corrección mínima será eliminar la segunda línea.
+
+Para detener el servicio localmente antes de corregir, ejecuta en PowerShell o CMD:
+
+```bat
+schtasks /End /TN RespaldosAutomagicos
+schtasks /Change /TN RespaldosAutomagicos /DISABLE
+schtasks /Delete /TN RespaldosAutomagicosReactivar /F
+```
+
+También vi por qué la ventana se cierra: `uv run respaldos-automagicos` imprimió el traceback pero devolvió código `0`, así que el `if errorlevel 1` del `.bat` no activa el `pause`.
+
+--- fecha y hora de fin: 2026-06-27T20:20:25-06:00
+--- proceso: P0004
