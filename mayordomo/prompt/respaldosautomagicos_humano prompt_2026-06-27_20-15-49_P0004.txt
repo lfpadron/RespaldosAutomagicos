@@ -1,9 +1,0 @@
---- proceso: P0004
---- fecha y hora de inicio: 2026-06-27T20:15:49-06:00
-
-Al darle doble clic a "abrir_tui.bat" se despliegan varios mensajes de error, pero no puedo leerlos, porque se cierra automáticamente.
-
-Antes de corregir, detén el servicio de respaldos que está corriendo en segundo plano.
-
---- fecha y hora de fin: 2026-06-27T20:20:25-06:00
---- proceso: P0004

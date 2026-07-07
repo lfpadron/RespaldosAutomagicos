@@ -1,8 +1,0 @@
---- proceso: P0012
---- fecha y hora de inicio: 2026-06-27T23:41:07-06:00
-
-Tanto en historial, como en auditoria añade una columna después de fecha con el número de respaldo.
-La idea es identificar rápidamente el número de respaldo de una operación.
-
---- fecha y hora de fin: 2026-06-27T23:42:23-06:00
---- proceso: P0012

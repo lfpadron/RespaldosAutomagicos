@@ -1,9 +1,0 @@
---- proceso: P0003
---- fecha y hora de inicio: 2026-06-27T19:43:12-06:00
-
-Sigue sin salir "Forzar respaldo" en la TUI.
-
-Estoy dando doble clic a "abrir_tui.bat"
-
---- fecha y hora de fin: 2026-06-27T19:46:31-06:00
---- proceso: P0003
